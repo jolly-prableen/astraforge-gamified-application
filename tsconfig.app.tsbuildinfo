@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/scene/astraforgescene.tsx","./src/scene/constellation.ts","./src/scene/globeconfig.ts","./src/scene/random.ts","./src/scene/textpoints.ts","./src/state/useastraforgestore.ts"],"version":"5.9.3"}
