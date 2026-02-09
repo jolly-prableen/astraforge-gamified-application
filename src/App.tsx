@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AstraforgeScene, { IntroPhase } from "./scene/AstraforgeScene";
 import { useAstraforgeStore, useBadges } from "./state/useAstraforgeStore";
-import type { Step } from "./state/useAstraforgeStore";
+import type { AstraforgeState, Step } from "./state/useAstraforgeStore";
+import { useFeatureFlags } from "./state/featureFlags";
 import html2canvas from "html2canvas";
 
 type Page = "HOME" | "APPLICATION";
@@ -34,25 +35,30 @@ export default function App() {
   const introPhase = useIntroSequence();
   const [page, setPage] = useState<Page>("HOME");
   const [confetti, setConfetti] = useState(false);
-  const xp = useAstraforgeStore((state) => state.xp);
-  const currentStep = useAstraforgeStore((state) => state.currentStep);
-  const profileCompleted = useAstraforgeStore((state) => state.profileCompleted);
-  const tasks = useAstraforgeStore((state) => state.tasks);
-  const submitted = useAstraforgeStore((state) => state.submitted);
-  const timeline = useAstraforgeStore((state) => state.timeline);
-  const achievementLog = useAstraforgeStore((state) => state.achievementLog);
-  const reduceMotion = useAstraforgeStore((state) => state.reduceMotion);
-  const completionTimestamp = useAstraforgeStore((state) => state.completionTimestamp);
-  const completeProfile = useAstraforgeStore((state) => state.completeProfile);
-  const completeTask = useAstraforgeStore((state) => state.completeTask);
-  const addTask = useAstraforgeStore((state) => state.addTask);
-  const submitApplication = useAstraforgeStore((state) => state.submitApplication);
-  const resetApplication = useAstraforgeStore((state) => state.resetApplication);
-  const toggleReduceMotion = useAstraforgeStore((state) => state.toggleReduceMotion);
-  const reconcileStep = useAstraforgeStore((state) => state.reconcileStep);
-  const goToStep = useAstraforgeStore((state) => state.goToStep);
+  const totalXP = useAstraforgeStore((state: AstraforgeState) => state.totalXP);
+  const currentStep = useAstraforgeStore((state: AstraforgeState) => state.currentStep);
+  const profileCompleted = useAstraforgeStore((state: AstraforgeState) => state.profileCompleted);
+  const taskSets = useAstraforgeStore((state: AstraforgeState) => state.taskSets);
+  const activeTaskSetId = useAstraforgeStore((state: AstraforgeState) => state.activeTaskSetId);
+  const achievementLog = useAstraforgeStore((state: AstraforgeState) => state.achievementLog);
+  const currentStreak = useAstraforgeStore((state: AstraforgeState) => state.currentStreak);
+  const longestStreak = useAstraforgeStore((state: AstraforgeState) => state.longestStreak);
+  const personalityType = useAstraforgeStore((state: AstraforgeState) => state.personalityType);
+  const personalityDerivedAt = useAstraforgeStore((state: AstraforgeState) => state.personalityDerivedAt);
+  const reduceMotion = useAstraforgeStore((state: AstraforgeState) => state.reduceMotion);
+  const completeProfile = useAstraforgeStore((state: AstraforgeState) => state.completeProfile);
+  const completeTask = useAstraforgeStore((state: AstraforgeState) => state.completeTask);
+  const addTask = useAstraforgeStore((state: AstraforgeState) => state.addTask);
+  const submitApplication = useAstraforgeStore((state: AstraforgeState) => state.submitApplication);
+  const addNewMission = useAstraforgeStore((state: AstraforgeState) => state.addNewMission);
+  const resetActiveMissionTasks = useAstraforgeStore((state: AstraforgeState) => state.resetActiveMissionTasks);
+  const resetAll = useAstraforgeStore((state: AstraforgeState) => state.resetAll);
+  const toggleReduceMotion = useAstraforgeStore((state: AstraforgeState) => state.toggleReduceMotion);
+  const reconcileStep = useAstraforgeStore((state: AstraforgeState) => state.reconcileStep);
+  const goToStep = useAstraforgeStore((state: AstraforgeState) => state.goToStep);
   const badges = useBadges();
-  const lastXp = useRef(xp);
+  const featureFlags = useFeatureFlags();
+  const lastXp = useRef(totalXP);
   const [xpPulse, setXpPulse] = useState(false);
   const [badgePulse, setBadgePulse] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -60,18 +66,69 @@ export default function App() {
   const [newTaskLabel, setNewTaskLabel] = useState("");
   const [shareInProgress, setShareInProgress] = useState(false);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [expandedTaskSets, setExpandedTaskSets] = useState<Record<string, boolean>>({});
   const [showSystemOverview, setShowSystemOverview] = useState(false);
+  const [showFullLog, setShowFullLog] = useState(false);
   const snapshotRef = useRef<HTMLDivElement>(null);
 
+  const activeTaskSet = useMemo(
+    () => taskSets.find((taskSet) => taskSet.id === activeTaskSetId) || taskSets[0],
+    [taskSets, activeTaskSetId]
+  );
+  const completedTaskSets = useMemo(
+    () => taskSets.filter((taskSet) => taskSet.completed),
+    [taskSets]
+  );
+  const totalTasksCompleted = useMemo(
+    () => taskSets.reduce((sum, taskSet) => sum + taskSet.tasks.filter((task) => task.completed).length, 0),
+    [taskSets]
+  );
+  const averageXpPerMission = useMemo(() => {
+    if (completedTaskSets.length === 0) {
+      return 0;
+    }
+    const totalMissionXp = completedTaskSets.reduce((sum, taskSet) => sum + taskSet.xpEarned, 0);
+    return Math.round(totalMissionXp / completedTaskSets.length);
+  }, [completedTaskSets]);
+  const mostProductiveDay = useMemo(() => {
+    if (achievementLog.length === 0) {
+      return null;
+    }
+    const dayTotals: Record<string, number> = {};
+    for (const entry of achievementLog) {
+      if (!entry.xp) {
+        continue;
+      }
+      const date = new Date(entry.timestamp);
+      const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+        date.getDate()
+      ).padStart(2, "0")}`;
+      dayTotals[dayKey] = (dayTotals[dayKey] ?? 0) + entry.xp;
+    }
+    const sorted = Object.entries(dayTotals).sort((a, b) => b[1] - a[1]);
+    if (sorted.length === 0) {
+      return null;
+    }
+    const [dayKey, xp] = sorted[0];
+    return {
+      dayLabel: new Date(`${dayKey}T00:00:00`).toLocaleDateString(),
+      xp
+    };
+  }, [achievementLog]);
+  const visibleLogEntries = useMemo(
+    () => (showFullLog ? achievementLog : achievementLog.slice(0, 6)),
+    [achievementLog, showFullLog]
+  );
+
   useEffect(() => {
-    if (xp > lastXp.current) {
+    if (totalXP > lastXp.current) {
       setXpPulse(true);
       const timer = window.setTimeout(() => setXpPulse(false), 800);
-      lastXp.current = xp;
+      lastXp.current = totalXP;
       return () => window.clearTimeout(timer);
     }
-    lastXp.current = xp;
-  }, [xp]);
+    lastXp.current = totalXP;
+  }, [totalXP]);
 
   useEffect(() => {
     const newlyUnlocked = badges.find((badge) => badge.unlocked && badge.id !== badgePulse);
@@ -85,18 +142,19 @@ export default function App() {
 
   useEffect(() => {
     reconcileStep();
-  }, [profileCompleted, tasks, submitted, reconcileStep]);
+  }, [profileCompleted, activeTaskSet, reconcileStep]);
 
   const progressPercent = useMemo(() => {
     const stepsCompleted = [
       profileCompleted,
-      tasks.length > 0 && tasks.every((task) => task.completed),
-      submitted
+      activeTaskSet?.completed,
+      Boolean(activeTaskSet?.submittedAt)
     ].filter(Boolean).length;
     return (stepsCompleted / 3) * 100;
-  }, [profileCompleted, submitted, tasks]);
+  }, [profileCompleted, activeTaskSet]);
 
-  const allTasksDone = useMemo(() => tasks.length > 0 && tasks.every((task) => task.completed), [tasks]);
+  const allTasksDone = Boolean(activeTaskSet?.completed);
+  const submitted = Boolean(activeTaskSet?.submittedAt);
   const maxStep = useMemo<Step>(() => {
     if (!profileCompleted) {
       return 1;
@@ -163,27 +221,35 @@ export default function App() {
     }
   };
 
-  const handleResetApplication = () => {
+  const handleAddMission = () => {
     if (!resetConfirm) {
       setResetConfirm(true);
       return;
     }
-    resetApplication();
+    addNewMission();
+    setResetConfirm(false);
+    setPage("APPLICATION");
+  };
+
+  const handleResetAll = () => {
+    resetAll();
     setPage("HOME");
     setResetConfirm(false);
   };
 
   const handleExportSummary = () => {
-    const stepsCompleted = [
-      profileCompleted ? "Profile" : null,
-      allTasksDone ? "Tasks" : null,
-      submitted ? "Submission" : null
-    ].filter((step): step is string => Boolean(step));
+    const missionHistory = taskSets.map((taskSet) => ({
+      id: taskSet.id,
+      title: taskSet.title,
+      completed: taskSet.completed,
+      xpEarned: taskSet.xpEarned,
+      completedAt: taskSet.completedAt,
+      submittedAt: taskSet.submittedAt
+    }));
     const summary = {
-      finalXP: xp,
-      stepsCompleted,
-      unlockedBadges: badges.filter(b => b.unlocked).map(b => b.label),
-      completionTimestamp: completionTimestamp,
+      totalXP,
+      missionHistory,
+      unlockedBadges: badges.filter((badge) => badge.unlocked).map((badge) => badge.label),
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(summary, null, 2)], { type: "application/json" });
@@ -204,6 +270,13 @@ export default function App() {
   const handleAddTask = () => {
     addTask(newTaskLabel);
     setNewTaskLabel("");
+  };
+
+  const toggleTaskSet = (taskSetId: string) => {
+    setExpandedTaskSets((prev) => ({
+      ...prev,
+      [taskSetId]: !prev[taskSetId]
+    }));
   };
 
   return (
@@ -229,7 +302,7 @@ export default function App() {
               <div className="application-subtitle">ASTRAFORGE mission workflow</div>
             </div>
             <div className="header-controls">
-              <div className={`xp-counter${xpPulse ? " xp-counter--pulse" : ""}`}>Stellar Energy: {xp} XP</div>
+              <div className={`xp-counter${xpPulse ? " xp-counter--pulse" : ""}`}>Stellar Energy: {totalXP} XP</div>
               <label className="reduce-motion-toggle">
                 <input 
                   type="checkbox" 
@@ -283,11 +356,29 @@ export default function App() {
                   <div className="panel-description">Introduce the operator behind the constellation.</div>
                   <div className="form-field">
                     <label>Name</label>
-                    <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" />
+                    <input
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && name.trim() !== "" && !profileCompleted) {
+                          completeProfile();
+                        }
+                      }}
+                      placeholder="Your name"
+                    />
                   </div>
                   <div className="form-field">
                     <label>Focus</label>
-                    <input value={role} onChange={(event) => setRole(event.target.value)} placeholder="Discipline" />
+                    <input
+                      value={role}
+                      onChange={(event) => setRole(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && name.trim() !== "" && !profileCompleted) {
+                          completeProfile();
+                        }
+                      }}
+                      placeholder="Discipline"
+                    />
                   </div>
                   <button
                     className="application-button"
@@ -299,38 +390,88 @@ export default function App() {
                 </>
               )}
 
-              {currentStep === 2 && (
+              {currentStep === 2 && activeTaskSet && (
                 <>
-                  <div className="panel-title">Tasks</div>
-                  <div className="panel-description">Complete each action to ignite new stars.</div>
-                  <div className="task-add">
-                    <input
-                      value={newTaskLabel}
-                      onChange={(event) => setNewTaskLabel(event.target.value)}
-                      placeholder="Add a custom task"
-                      aria-label="Add a custom task"
-                    />
-                    <button
-                      className="application-button"
-                      type="button"
-                      onClick={handleAddTask}
-                      disabled={submitted || newTaskLabel.trim() === ""}
-                    >
-                      Add Task
-                    </button>
-                  </div>
-                  <div className="task-list">
-                    {tasks.map((task) => (
-                      <label key={task.id} className={`task-item${task.completed ? " task-item--done" : ""}`}>
-                        <input
-                          type="checkbox"
-                          checked={task.completed}
-                          onChange={() => completeTask(task.id)}
-                          disabled={task.completed}
-                        />
-                        <span>{task.label}</span>
-                      </label>
-                    ))}
+                  <div className="panel-title">Missions</div>
+                  <div className="panel-description">Complete tasks in your active mission to progress.</div>
+                  <div className="task-sets">
+                    {taskSets.map((taskSet) => {
+                      const isActive = taskSet.id === activeTaskSetId;
+                      const isExpanded = expandedTaskSets[taskSet.id] ?? isActive;
+                      const isCompleted = taskSet.completed;
+                      return (
+                        <div key={taskSet.id} className={`task-set${isActive ? " task-set--active" : ""}`}>
+                          <button
+                            className="task-set-header"
+                            type="button"
+                            onClick={() => toggleTaskSet(taskSet.id)}
+                          >
+                            <div>
+                              <div className="task-set-title">{taskSet.title}</div>
+                              <div className="task-set-subtitle">
+                                {isCompleted ? "Completed" : isActive ? "Active" : "Locked"} · {taskSet.tasks.length} tasks
+                              </div>
+                            </div>
+                            <div className="task-set-meta">
+                              <span className="task-set-xp">{taskSet.xpEarned} XP</span>
+                              <span className="task-set-toggle">{isExpanded ? "−" : "+"}</span>
+                            </div>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="task-set-body">
+                              {isActive && !isCompleted && (
+                                <div className="task-add">
+                                  <input
+                                    value={newTaskLabel}
+                                    onChange={(event) => setNewTaskLabel(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" && newTaskLabel.trim() !== "") {
+                                        handleAddTask();
+                                      }
+                                    }}
+                                    placeholder="Add a custom task"
+                                    aria-label="Add a custom task"
+                                  />
+                                  <button
+                                    className="application-button"
+                                    type="button"
+                                    onClick={handleAddTask}
+                                    disabled={newTaskLabel.trim() === ""}
+                                  >
+                                    Add Task
+                                  </button>
+                                  <button
+                                    className="application-button"
+                                    type="button"
+                                    onClick={resetActiveMissionTasks}
+                                    disabled={taskSet.tasks.some((task) => task.completed)}
+                                  >
+                                    Reset Tasks
+                                  </button>
+                                </div>
+                              )}
+                              <div className="task-list">
+                                {taskSet.tasks.map((task) => (
+                                  <label
+                                    key={task.id}
+                                    className={`task-item${task.completed ? " task-item--done" : ""}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={task.completed}
+                                      onChange={() => completeTask(task.id)}
+                                      disabled={!isActive || task.completed}
+                                    />
+                                    <span>{task.label}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -338,9 +479,9 @@ export default function App() {
               {currentStep === 3 && (
                 <>
                   <div className="panel-title">Submission</div>
-                  <div className="panel-description">Lock the constellation and submit your application.</div>
+                  <div className="panel-description">Submit the active mission once tasks are complete.</div>
                   <button className="application-button" onClick={handleSubmit} disabled={submitted}>
-                    {submitted ? "Submitted" : "Submit Application"}
+                    {submitted ? "Submitted" : "Submit Mission"}
                   </button>
                 </>
               )}
@@ -348,7 +489,7 @@ export default function App() {
               {currentStep === 4 && (
                 <>
                   <div className="panel-title">Status</div>
-                  <div className="panel-description">Your constellation is now archived.</div>
+                  <div className="panel-description">Your mission archive and achievements.</div>
                   
                   <div className="snapshot-container" ref={snapshotRef}>
                     <div className="snapshot-header">
@@ -358,27 +499,43 @@ export default function App() {
                     
                     <div className="snapshot-body">
                       <div className="snapshot-section">
-                        <div className="snapshot-label">Stellar Energy Earned</div>
-                        <div className="snapshot-value">{xp} XP</div>
+                        <div className="snapshot-label">Total Stellar Energy</div>
+                        <div className="snapshot-value">{totalXP} XP</div>
                       </div>
 
                       <div className="snapshot-section">
                         <div className="snapshot-label">Achievements Unlocked</div>
                         <div className="snapshot-badges">
-                          {badges.filter(b => b.unlocked).map(badge => (
+                          {badges.filter((badge) => badge.unlocked).map((badge) => (
                             <div key={badge.id} className="snapshot-badge">{badge.label}</div>
                           ))}
                         </div>
                       </div>
+                      {featureFlags.streaks && (
+                        <div className="snapshot-section">
+                          <div className="snapshot-label">Engagement Streak</div>
+                          <div className="snapshot-value">🔥 {currentStreak}-Day Streak</div>
+                          <div className="snapshot-progress">Longest: {longestStreak} days</div>
+                        </div>
+                      )}
 
                       <div className="snapshot-section">
-                        <div className="snapshot-label">Progress</div>
-                        <div className="snapshot-progress">✓ 100% Complete</div>
+                        <div className="snapshot-label">Mission History</div>
+                        <div className="snapshot-progress">
+                          {completedTaskSets.length} completed
+                        </div>
+                      </div>
+                      <div className="snapshot-section">
+                        <div className="snapshot-label">Constellation Personality</div>
+                        <div className="snapshot-value">{personalityType}</div>
+                        <div className="snapshot-progress">
+                          Derived: {personalityDerivedAt ? new Date(personalityDerivedAt).toLocaleDateString() : "-"}
+                        </div>
                       </div>
                     </div>
 
                     <div className="snapshot-footer">
-                      <div className="snapshot-timestamp">{new Date().toLocaleDateString()}</div>
+                        <div className="snapshot-timestamp">{new Date().toLocaleDateString()}</div>
                     </div>
                   </div>
 
@@ -390,12 +547,66 @@ export default function App() {
                     {shareInProgress ? "Generating..." : "Share Snapshot"}
                   </button>
 
-                  <button 
-                    className="application-button" 
+                  <button
+                    className="application-button"
                     onClick={handleExportSummary}
                   >
                     Export Summary
                   </button>
+
+                  <div className="mission-history">
+                    <div className="mission-history-title">Mission History</div>
+                    {completedTaskSets.length === 0 ? (
+                      <div className="status-message">No completed missions yet.</div>
+                    ) : (
+                      completedTaskSets.map((taskSet) => (
+                        <div key={taskSet.id} className="mission-history-entry">
+                          <div className="mission-history-heading">
+                            <span className="mission-history-name">{taskSet.title}</span>
+                            <span className="mission-history-xp">{taskSet.xpEarned} XP</span>
+                          </div>
+                          <div className="mission-history-meta">
+                            Completed: {taskSet.completedAt ? new Date(taskSet.completedAt).toLocaleString() : "-"}
+                          </div>
+                          <div className="mission-history-meta">
+                            Submitted: {taskSet.submittedAt ? new Date(taskSet.submittedAt).toLocaleString() : "-"}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="mission-history">
+                    <div className="mission-history-title">Constellation Personality</div>
+                    <div className="status-message">{personalityType}</div>
+                    <div className="mission-history-meta">
+                      Derived: {personalityDerivedAt ? new Date(personalityDerivedAt).toLocaleString() : "-"}
+                    </div>
+                  </div>
+
+                  {featureFlags.insights && (
+                    <div className="progress-insights">
+                      <div className="progress-insights-title">Progress Insights</div>
+                      <div className="progress-insights-row">
+                        <span className="progress-insights-label">Missions completed</span>
+                        <span className="progress-insights-value">{completedTaskSets.length}</span>
+                      </div>
+                      <div className="progress-insights-row">
+                        <span className="progress-insights-label">Tasks completed</span>
+                        <span className="progress-insights-value">{totalTasksCompleted}</span>
+                      </div>
+                      <div className="progress-insights-row">
+                        <span className="progress-insights-label">Average XP per mission</span>
+                        <span className="progress-insights-value">{averageXpPerMission} XP</span>
+                      </div>
+                      <div className="progress-insights-row">
+                        <span className="progress-insights-label">Most productive day</span>
+                        <span className="progress-insights-value">
+                          {mostProductiveDay ? `${mostProductiveDay.dayLabel} · ${mostProductiveDay.xp} XP` : "-"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   <button 
                     className="application-link" 
@@ -411,24 +622,24 @@ export default function App() {
                         <div className="system-overview-content">
                           Complete your profile: +20 XP<br/>
                           Complete each task: +10 XP per task<br/>
-                          Submit your application: +30 XP
+                          Submit each mission: +30 XP
                         </div>
                       </div>
 
                       <div className="system-overview-section">
                         <div className="system-overview-title">How Badges Unlock</div>
                         <div className="system-overview-content">
-                          Stellar Pioneer: 50 XP or more<br/>
-                          Cosmic Navigator: 100 XP or more
+                          Stellar Alignment: 50 XP or more<br/>
+                          Astral Apex: 100 XP or more
                         </div>
                       </div>
 
                       <div className="system-overview-section">
                         <div className="system-overview-title">Progress System</div>
                         <div className="system-overview-content">
-                          Each step builds on the previous one.<br/>
-                          All progress is saved automatically.<br/>
-                          Complete all steps to unlock the Status page.
+                          Profiles are completed once.<br/>
+                          Missions can be repeated and stacked.<br/>
+                          All progress is saved automatically.
                         </div>
                       </div>
                     </div>
@@ -438,7 +649,7 @@ export default function App() {
                     <div className="achievement-log">
                       <div className="achievement-log-title">Achievement Log</div>
                       <div className="achievement-log-entries">
-                        {achievementLog.map((entry) => (
+                        {visibleLogEntries.map((entry) => (
                           <div key={entry.id} className={`achievement-log-entry achievement-log-entry--${entry.type}`}>
                             <div className="achievement-log-type">{entry.type}</div>
                             <div className="achievement-log-label">{entry.label}</div>
@@ -447,6 +658,15 @@ export default function App() {
                           </div>
                         ))}
                       </div>
+                      {achievementLog.length > 6 && (
+                        <button
+                          className="achievement-log-toggle"
+                          type="button"
+                          onClick={() => setShowFullLog((prev) => !prev)}
+                        >
+                          {showFullLog ? "View less" : "View more"}
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -472,6 +692,13 @@ export default function App() {
                 <div className="progress-value">{Math.round(progressPercent)}%</div>
               </div>
               <div className="badge-gallery">
+                {featureFlags.streaks && (
+                  <div className="streak-card">
+                    <div className="streak-title">Daily Streak</div>
+                    <div className="streak-value">🔥 {currentStreak}-Day Streak</div>
+                    <div className="streak-meta">Longest: {longestStreak} days</div>
+                  </div>
+                )}
                 {badges.map((badge) => (
                   <div
                     key={badge.id}
@@ -484,25 +711,29 @@ export default function App() {
                   </div>
                 ))}
               </div>
-
-              {submitted && timeline.length > 0 && (
+              {taskSets.length > 0 && (
                 <div className="timeline">
-                  <div className="timeline-title">Application Timeline</div>
+                  <div className="timeline-title">Mission History</div>
                   <div className="timeline-entries">
-                    {timeline.map((entry, index) => (
-                      <div key={entry.id} className="timeline-entry" style={{ animationDelay: `${index * 0.15}s` }}>
-                        <div className="timeline-dot" />
-                        <div className="timeline-content">
-                          <div className="timeline-label">{entry.label}</div>
-                          <div className="timeline-xp">+{entry.xp} XP</div>
+                    {taskSets
+                      .filter((taskSet) => taskSet.completed)
+                      .map((taskSet, index) => (
+                        <div key={taskSet.id} className="timeline-entry" style={{ animationDelay: `${index * 0.15}s` }}>
+                          <div className="timeline-dot" />
+                          <div className="timeline-content">
+                            <div className="timeline-label">{taskSet.title}</div>
+                            <div className="timeline-xp">{taskSet.xpEarned} XP</div>
+                            <div className="timeline-meta">
+                              {taskSet.completedAt ? new Date(taskSet.completedAt).toLocaleDateString() : ""}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                    <div className="timeline-entry timeline-entry--total" style={{ animationDelay: `${timeline.length * 0.15}s` }}>
+                      ))}
+                    <div className="timeline-entry timeline-entry--total" style={{ animationDelay: `${taskSets.length * 0.15}s` }}>
                       <div className="timeline-dot timeline-dot--final" />
                       <div className="timeline-content">
                         <div className="timeline-label">Total Stellar Energy</div>
-                        <div className="timeline-xp">{xp} XP</div>
+                        <div className="timeline-xp">{totalXP} XP</div>
                       </div>
                     </div>
                   </div>
@@ -516,12 +747,15 @@ export default function App() {
               Return to HOME
             </button>
             <div className="reset-container">
-              <button className="application-link" onClick={handleResetApplication}>
-                Reset Application
+              <button className="application-link" onClick={handleResetAll}>
+                Reset All
+              </button>
+              <button className="application-link" onClick={handleAddMission}>
+                Add New Mission
               </button>
               {resetConfirm && (
                 <div className="reset-confirm">
-                  Click again to confirm reset.
+                  Click again to launch a new mission.
                 </div>
               )}
             </div>

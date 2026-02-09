@@ -368,6 +368,73 @@ canvas {
   gap: 0.6rem;
 }
 
+.task-sets {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.task-set {
+  border: 1px solid rgba(120, 150, 190, 0.25);
+  background: rgba(6, 10, 18, 0.35);
+}
+
+.task-set--active {
+  border-color: rgba(190, 220, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(190, 220, 255, 0.2) inset;
+}
+
+.task-set-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-set-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(226, 238, 255, 0.9);
+}
+
+.task-set-subtitle {
+  font-size: 0.65rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(160, 185, 220, 0.7);
+  margin-top: 0.35rem;
+}
+
+.task-set-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(180, 205, 235, 0.8);
+}
+
+.task-set-xp {
+  color: rgba(210, 230, 255, 0.9);
+}
+
+.task-set-toggle {
+  font-size: 1.1rem;
+  color: rgba(200, 220, 245, 0.7);
+}
+
+.task-set-body {
+  padding: 0 1rem 1rem;
+}
+
 .task-add {
   display: flex;
   gap: 0.8rem;
@@ -434,6 +501,34 @@ canvas {
 .badge-gallery {
   display: grid;
   gap: 0.8rem;
+}
+
+.streak-card {
+  border: 1px solid rgba(160, 190, 230, 0.35);
+  padding: 0.9rem 1rem;
+  background: rgba(6, 10, 18, 0.5);
+}
+
+.streak-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: rgba(190, 210, 235, 0.85);
+  margin-bottom: 0.4rem;
+}
+
+.streak-value {
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  color: rgba(226, 238, 255, 0.95);
+}
+
+.streak-meta {
+  font-size: 0.65rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(160, 185, 220, 0.7);
+  margin-top: 0.35rem;
 }
 
 .badge {
@@ -754,6 +849,87 @@ canvas {
   letter-spacing: 0.1em;
 }
 
+.mission-history {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(186, 202, 222, 0.3);
+  background: rgba(10, 15, 28, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.mission-history-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(226, 238, 252, 0.85);
+}
+
+.mission-history-entry {
+  border-left: 2px solid rgba(190, 220, 255, 0.4);
+  padding: 0.6rem 0.8rem;
+  background: rgba(12, 18, 32, 0.6);
+}
+
+.mission-history-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: rgba(226, 238, 252, 0.85);
+  margin-bottom: 0.35rem;
+}
+
+.mission-history-name {
+  text-transform: uppercase;
+}
+
+.mission-history-xp {
+  color: rgba(190, 220, 255, 0.85);
+}
+
+.mission-history-meta {
+  font-size: 0.7rem;
+  color: rgba(170, 195, 225, 0.7);
+  letter-spacing: 0.05em;
+}
+
+.progress-insights {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(170, 200, 235, 0.3);
+  background: rgba(10, 15, 28, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.progress-insights-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(226, 238, 252, 0.85);
+}
+
+.progress-insights-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  color: rgba(190, 210, 235, 0.85);
+}
+
+.progress-insights-label {
+  color: rgba(170, 195, 225, 0.75);
+}
+
+.progress-insights-value {
+  color: rgba(226, 238, 252, 0.9);
+}
+
 /* Timeline */
 .timeline {
   margin-top: 1.5rem;
@@ -825,6 +1001,12 @@ canvas {
 .timeline-xp {
   color: rgba(160, 185, 220, 0.7);
   font-size: 0.7rem;
+  letter-spacing: 0.08em;
+}
+
+.timeline-meta {
+  color: rgba(150, 175, 205, 0.6);
+  font-size: 0.65rem;
   letter-spacing: 0.08em;
 }
 
@@ -942,6 +1124,10 @@ canvas {
   border-left-color: rgba(255, 200, 100, 0.6);
 }
 
+.achievement-log-entry--mission {
+  border-left-color: rgba(190, 150, 255, 0.6);
+}
+
 .achievement-log-entry--step_transition {
   border-left-color: rgba(150, 255, 150, 0.6);
 }
@@ -974,6 +1160,19 @@ canvas {
   color: rgba(160, 185, 220, 0.6);
   font-size: 0.65rem;
   font-family: "Courier New", monospace;
+}
+
+.achievement-log-toggle {
+  margin-top: 0.8rem;
+  align-self: flex-start;
+  border: 1px solid rgba(150, 180, 220, 0.35);
+  background: rgba(8, 12, 20, 0.5);
+  color: rgba(210, 224, 242, 0.9);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
 }
 
 @keyframes fadeIn {

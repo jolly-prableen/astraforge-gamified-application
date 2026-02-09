@@ -3,6 +3,7 @@ import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useAstraforgeStore } from "../state/useAstraforgeStore";
+import type { TaskSet } from "../state/useAstraforgeStore";
 import { generateBackgroundStars, Vec3 } from "./constellation";
 import { GLOBE_RADIUS, GLOBE_RINGS, NODES_PER_RING } from "./globeConfig";
 import { mulberry32, randomRange } from "./random";
@@ -108,7 +109,7 @@ const SimpleGlobe = ({ positions, stabilized, xp }: { positions: Float32Array; s
     const targetY = mouse.x * tiltScale;
     tilt.current.x = THREE.MathUtils.lerp(tilt.current.x, targetX, 1 - Math.exp(-delta * 3));
     tilt.current.y = THREE.MathUtils.lerp(tilt.current.y, targetY, 1 - Math.exp(-delta * 3));
-    const baseSpeed = stabilized ? 0 : 0.04;
+    const baseSpeed = stabilized ? 0.04 : 0.04;
     groupRef.current.rotation.y = t * baseSpeed + tilt.current.y;
     groupRef.current.rotation.x = 0.15 + tilt.current.x;
 
@@ -132,60 +133,87 @@ const SimpleGlobe = ({ positions, stabilized, xp }: { positions: Float32Array; s
   );
 };
 
-const ConstellationLayer = ({ globePositions }: { globePositions: Float32Array }) => {
-  const xp = useAstraforgeStore((state) => state.xp);
-  const profileCompleted = useAstraforgeStore((state) => state.profileCompleted);
-  const completedTasks = useAstraforgeStore((state) => state.completedTasks);
-  const submitted = useAstraforgeStore((state) => state.submitted);
+const hashString = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash);
+};
+
+const ConstellationLayer = ({
+  globePositions,
+  totalXP,
+  profileCompleted,
+  taskSets
+}: {
+  globePositions: Float32Array;
+  totalXP: number;
+  profileCompleted: boolean;
+  taskSets: TaskSet[];
+}) => {
   const starMaterialRef = useRef<THREE.PointsMaterial>(null);
   const lineMaterialRef = useRef<THREE.LineBasicMaterial>(null);
   const colorAttributeRef = useRef<THREE.BufferAttribute | null>(null);
   const intensityRef = useRef<Float32Array | null>(null);
-  const centralMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const lineFade = useRef(0);
 
-  const activeStarCount = completedTasks.length;
-  const activeIndices = useMemo(() => {
-    const indices: number[] = [];
-    for (let i = 0; i < activeStarCount; i += 1) {
-      indices.push(i % (globePositions.length / 3));
-    }
-    return indices;
-  }, [activeStarCount, globePositions.length]);
+  const totalPoints = globePositions.length / 3;
+  const completedTasks = useMemo(
+    () =>
+      taskSets.flatMap((taskSet) =>
+        taskSet.tasks.filter((task) => task.completed).map((task, index) => ({
+          task,
+          taskSetId: taskSet.id,
+          index
+        }))
+      ),
+    [taskSets]
+  );
 
   const starPositions = useMemo(() => {
-    const data = new Float32Array(activeStarCount * 3);
-    activeIndices.forEach((index, slot) => {
-      const baseIndex = index * 3;
+    const data = new Float32Array(completedTasks.length * 3);
+    completedTasks.forEach((entry, slot) => {
+      const hash = hashString(`${entry.taskSetId}-${entry.task.id}-${entry.index}`);
+      const globeIndex = hash % totalPoints;
+      const baseIndex = globeIndex * 3;
       data[slot * 3] = globePositions[baseIndex];
       data[slot * 3 + 1] = globePositions[baseIndex + 1];
       data[slot * 3 + 2] = globePositions[baseIndex + 2];
     });
     return data;
-  }, [activeIndices, activeStarCount, globePositions]);
+  }, [completedTasks, globePositions, totalPoints]);
 
   const connectionPositions = useMemo(() => {
-    if (!submitted || activeStarCount === 0) {
-      return new Float32Array(0);
-    }
-    const data = new Float32Array(activeStarCount * 6);
-    const origin = profileCompleted ? [0, 0, 0] : null;
-    for (let i = 0; i < activeStarCount; i += 1) {
-      const toIndex = activeIndices[i] * 3;
-      const base = i * 6;
-      data[base] = origin ? origin[0] : globePositions[activeIndices[0] * 3];
-      data[base + 1] = origin ? origin[1] : globePositions[activeIndices[0] * 3 + 1];
-      data[base + 2] = origin ? origin[2] : globePositions[activeIndices[0] * 3 + 2];
-      data[base + 3] = globePositions[toIndex];
-      data[base + 4] = globePositions[toIndex + 1];
-      data[base + 5] = globePositions[toIndex + 2];
-    }
-    return data;
-  }, [submitted, activeStarCount, activeIndices, globePositions, profileCompleted]);
+    const segments: number[] = [];
+    taskSets.forEach((taskSet) => {
+      if (!taskSet.submittedAt) {
+        return;
+      }
+      const indices = taskSet.tasks.map((task, index) => {
+        const hash = hashString(`${taskSet.id}-${task.id}-${index}`);
+        return hash % totalPoints;
+      });
+      for (let i = 1; i < indices.length; i += 1) {
+        const fromBase = indices[i - 1] * 3;
+        const toBase = indices[i] * 3;
+        segments.push(
+          globePositions[fromBase],
+          globePositions[fromBase + 1],
+          globePositions[fromBase + 2],
+          globePositions[toBase],
+          globePositions[toBase + 1],
+          globePositions[toBase + 2]
+        );
+      }
+    });
+    return new Float32Array(segments);
+  }, [taskSets, globePositions, totalPoints]);
 
   useEffect(() => {
-    intensityRef.current = new Float32Array(activeStarCount).fill(0);
-  }, [activeStarCount]);
+    intensityRef.current = new Float32Array(completedTasks.length).fill(0);
+  }, [completedTasks.length]);
 
   const baseColor = useMemo(() => new THREE.Color().setHSL(0.62, 0.35, 0.48), []);
   const warmColor = useMemo(() => new THREE.Color().setHSL(0.08, 0.5, 0.62), []);
@@ -195,49 +223,29 @@ const ConstellationLayer = ({ globePositions }: { globePositions: Float32Array }
       return;
     }
     const intensity = intensityRef.current;
-    const xpFactor = Math.min(1, xp / 100);
+    const xpFactor = Math.min(1, totalXP / 100);
     const targetActive = 0.45 + xpFactor * 0.35;
 
-    for (let i = 0; i < activeStarCount; i += 1) {
+    for (let i = 0; i < completedTasks.length; i += 1) {
       intensity[i] = THREE.MathUtils.lerp(intensity[i], targetActive, 0.08);
       const color = baseColor.clone().lerp(warmColor, xpFactor).multiplyScalar(intensity[i]);
       colorAttributeRef.current.setXYZ(i, color.r, color.g, color.b);
     }
     colorAttributeRef.current.needsUpdate = true;
 
-    lineFade.current = THREE.MathUtils.lerp(lineFade.current, submitted ? 1 : 0, 0.06);
+    lineFade.current = THREE.MathUtils.lerp(lineFade.current, connectionPositions.length > 0 ? 1 : 0, 0.06);
     if (lineMaterialRef.current) {
-      lineMaterialRef.current.opacity = lineFade.current * 0.35;
-    }
-    if (centralMaterialRef.current) {
-      centralMaterialRef.current.opacity = THREE.MathUtils.lerp(
-        centralMaterialRef.current.opacity,
-        profileCompleted ? 0.95 : 0,
-        0.08
-      );
+      lineMaterialRef.current.opacity = lineFade.current * (0.2 + xpFactor * 0.2);
     }
   });
 
-  if (activeStarCount === 0 && !profileCompleted) {
+  if (completedTasks.length === 0 && !profileCompleted) {
     return null;
   }
 
   return (
     <group>
-      {profileCompleted && (
-        <mesh>
-          <sphereGeometry args={[0.14, 28, 28]} />
-          <meshStandardMaterial
-            ref={centralMaterialRef}
-            color="#f1f7ff"
-            emissive="#c7ddff"
-            emissiveIntensity={2}
-            transparent
-            opacity={0}
-          />
-        </mesh>
-      )}
-      {activeStarCount > 0 && (
+      {completedTasks.length > 0 && (
         <points>
           <bufferGeometry>
             <bufferAttribute
@@ -248,13 +256,21 @@ const ConstellationLayer = ({ globePositions }: { globePositions: Float32Array }
             />
             <bufferAttribute
               attach="attributes-color"
-              array={new Float32Array(activeStarCount * 3)}
-              count={activeStarCount}
+              array={new Float32Array(completedTasks.length * 3)}
+              count={completedTasks.length}
               itemSize={3}
               ref={colorAttributeRef}
             />
           </bufferGeometry>
-          <pointsMaterial ref={starMaterialRef} size={0.08} vertexColors transparent opacity={0.9} depthWrite={false} />
+          <pointsMaterial
+            ref={starMaterialRef}
+            size={0.075}
+            vertexColors
+            transparent
+            opacity={0.95}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
         </points>
       )}
       {connectionPositions.length > 0 && (
@@ -356,8 +372,15 @@ const IntroWord = ({ phase, seed }: { phase: IntroPhase; seed: number }) => {
 
 export default function AstraforgeScene({ introPhase, onCameraSettled }: SceneProps) {
   const seed = 7777;
-  const submitted = useAstraforgeStore((state) => state.submitted);
-  const xp = useAstraforgeStore((state) => state.xp);
+  const totalXP = useAstraforgeStore((state) => state.totalXP);
+  const profileCompleted = useAstraforgeStore((state) => state.profileCompleted);
+  const taskSets = useAstraforgeStore((state) => state.taskSets);
+  const activeTaskSetId = useAstraforgeStore((state) => state.activeTaskSetId);
+  const activeTaskSet = useMemo(
+    () => taskSets.find((taskSet) => taskSet.id === activeTaskSetId) || taskSets[0],
+    [taskSets, activeTaskSetId]
+  );
+  const submitted = Boolean(activeTaskSet?.submittedAt);
   const globePositions = useMemo(() => createGlobePositions(), []);
 
   return (
@@ -365,8 +388,8 @@ export default function AstraforgeScene({ introPhase, onCameraSettled }: ScenePr
       <color attach="background" args={["#05060b"]} />
       <ambientLight intensity={0.2} />
       <FarFieldStars seed={seed} />
-      <SimpleGlobe positions={globePositions} stabilized={submitted} xp={xp} />
-      <ConstellationLayer globePositions={globePositions} />
+      <SimpleGlobe positions={globePositions} stabilized={submitted} xp={totalXP} />
+      <ConstellationLayer globePositions={globePositions} totalXP={totalXP} profileCompleted={profileCompleted} taskSets={taskSets} />
       <IntroWord phase={introPhase} seed={seed} />
       <CameraRig introPhase={introPhase} onCameraSettled={onCameraSettled} />
       <EffectComposer>
