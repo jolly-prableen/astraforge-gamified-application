@@ -6,3 +6,4 @@ coverage/
 .env
 .env.*
 .DS_Store
+backend/node_modules
