@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AstraforgeScene, { IntroPhase } from "./scene/AstraforgeScene";
+import { AchievementPopup, AuthModal, GlitchCard, HomeAuthControls, SaveIndicator, UserProfileBar } from "./components";
+import type { AchievementPopupData } from "./components/AchievementPopup";
+import {
+  fetchUserDataRequest,
+  loginRequest,
+  saveUserDataRequest,
+  signupRequest,
+  type BackendUserData
+} from "./integration/authApi";
 import { useAstraforgeStore, useBadges } from "./state/useAstraforgeStore";
 import type { AstraforgeState, Step } from "./state/useAstraforgeStore";
 import { useFeatureFlags } from "./state/featureFlags";
+import { getUserLevel } from "./utils/gamification";
 import html2canvas from "html2canvas";
 
 type Page = "HOME" | "APPLICATION";
+const AUTH_STORAGE_KEY = "user";
 
 const useIntroSequence = () => {
   const [phase, setPhase] = useState<IntroPhase>("forming");
@@ -34,6 +45,18 @@ const steps = ["Profile", "Tasks", "Submission", "Status"];
 export default function App() {
   const introPhase = useIntroSequence();
   const [page, setPage] = useState<Page>("HOME");
+  const [authMode, setAuthMode] = useState<"LOGIN" | "SIGNUP" | null>(null);
+  const [loggedInUsername, setLoggedInUsername] = useState<string | null>(null);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [signupUsername, setSignupUsername] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSuccess, setAuthSuccess] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [achievementQueue, setAchievementQueue] = useState<AchievementPopupData[]>([]);
+  const [activeAchievement, setActiveAchievement] = useState<AchievementPopupData | null>(null);
   const [confetti, setConfetti] = useState(false);
   const totalXP = useAstraforgeStore((state: AstraforgeState) => state.totalXP);
   const currentStep = useAstraforgeStore((state: AstraforgeState) => state.currentStep);
@@ -70,6 +93,7 @@ export default function App() {
   const [showSystemOverview, setShowSystemOverview] = useState(false);
   const [showFullLog, setShowFullLog] = useState(false);
   const snapshotRef = useRef<HTMLDivElement>(null);
+  const lastAchievementIndexRef = useRef<number | null>(null);
 
   const activeTaskSet = useMemo(
     () => taskSets.find((taskSet) => taskSet.id === activeTaskSetId) || taskSets[0],
@@ -119,6 +143,98 @@ export default function App() {
     () => (showFullLog ? achievementLog : achievementLog.slice(0, 6)),
     [achievementLog, showFullLog]
   );
+  const levelInfo = useMemo(() => getUserLevel(totalXP), [totalXP]);
+
+  const hydrateStoreFromBackend = (data: BackendUserData | undefined) => {
+    if (!data) {
+      return;
+    }
+
+    useAstraforgeStore.setState((previous) => ({
+      ...previous,
+      totalXP: typeof data.totalXP === "number" ? data.totalXP : previous.totalXP,
+      taskSets: Array.isArray(data.taskSets)
+        ? (data.taskSets as AstraforgeState["taskSets"])
+        : previous.taskSets,
+      personalityType:
+        typeof data.personality === "string"
+          ? (data.personality as AstraforgeState["personalityType"])
+          : previous.personalityType,
+      personalityDerivedAt:
+        typeof data.personality === "string" ? Date.now() : previous.personalityDerivedAt
+    }));
+  };
+
+  const handleSignup = async () => {
+    setAuthError("");
+    setAuthSuccess("");
+    setAuthLoading(true);
+
+    try {
+      const payload = await signupRequest(signupUsername, signupPassword);
+      setAuthSuccess(payload.message || "Signup successful. You can now log in.");
+      setLoginUsername(signupUsername.trim());
+      setSignupPassword("");
+      setAuthMode("LOGIN");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Signup failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    setAuthError("");
+    setAuthSuccess("");
+    setAuthLoading(true);
+
+    try {
+      const loginPayload = await loginRequest(loginUsername, loginPassword);
+      const username = loginPayload.data?.username || loginUsername.trim();
+
+      const latestDataResponse = await fetchUserDataRequest(username);
+      hydrateStoreFromBackend(latestDataResponse.data?.data || loginPayload.data?.data);
+
+      setLoggedInUsername(username);
+      window.localStorage.setItem(AUTH_STORAGE_KEY, username);
+      setLoginPassword("");
+      setAuthMode(null);
+      setPage("APPLICATION");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Login failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setLoggedInUsername(null);
+    setAuthError("");
+    setAuthSuccess("");
+    setLoginPassword("");
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    resetAll();
+    setPage("HOME");
+  };
+
+  const openLoginPage = () => {
+    setAuthError("");
+    setAuthSuccess("");
+    setAuthMode("LOGIN");
+  };
+
+  const openSignupPage = () => {
+    setAuthError("");
+    setAuthSuccess("");
+    setAuthMode("SIGNUP");
+  };
+
+  const closeAuthModal = () => {
+    setAuthError("");
+    setAuthSuccess("");
+    setAuthLoading(false);
+    setAuthMode(null);
+  };
 
   useEffect(() => {
     if (totalXP > lastXp.current) {
@@ -143,6 +259,124 @@ export default function App() {
   useEffect(() => {
     reconcileStep();
   }, [profileCompleted, activeTaskSet, reconcileStep]);
+
+  useEffect(() => {
+    const savedUsername = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!savedUsername) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const restoreSession = async () => {
+      try {
+        const response = await fetchUserDataRequest(savedUsername);
+        if (cancelled) {
+          return;
+        }
+        hydrateStoreFromBackend(response.data?.data);
+        setLoggedInUsername(savedUsername);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Session restore failed:", error);
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!loggedInUsername) {
+      setSaveState("idle");
+      return;
+    }
+
+    let resetTimer: number | undefined;
+    const timer = window.setTimeout(async () => {
+      try {
+        setSaveState("saving");
+        await saveUserDataRequest(loggedInUsername, {
+          totalXP,
+          taskSets,
+          personality: personalityType
+        });
+        setSaveState("saved");
+        resetTimer = window.setTimeout(() => setSaveState("idle"), 1600);
+      } catch (error) {
+        console.warn("Auto-save failed:", error);
+        setSaveState("error");
+        resetTimer = window.setTimeout(() => setSaveState("idle"), 2200);
+      }
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (resetTimer) {
+        window.clearTimeout(resetTimer);
+      }
+    };
+  }, [loggedInUsername, totalXP, taskSets, personalityType]);
+
+  useEffect(() => {
+    if (lastAchievementIndexRef.current === null) {
+      lastAchievementIndexRef.current = achievementLog.length;
+      return;
+    }
+
+    if (achievementLog.length <= lastAchievementIndexRef.current) {
+      return;
+    }
+
+    const entriesToProcess = achievementLog.slice(lastAchievementIndexRef.current);
+    lastAchievementIndexRef.current = achievementLog.length;
+
+    const nextPopups: AchievementPopupData[] = entriesToProcess
+      .filter((entry) => entry.type === "task" || entry.type === "badge" || entry.type === "submission")
+      .map((entry) => ({
+        id: entry.id,
+        title:
+          entry.type === "task"
+            ? "Task Completed"
+            : entry.type === "submission"
+              ? "Submission Completed"
+              : "Badge Unlocked",
+        xpGained: entry.xp,
+        badgeName: entry.type === "badge" ? entry.label.replace("Badge Unlocked:", "").trim() || entry.label : undefined
+      }));
+
+    if (nextPopups.length > 0) {
+      setAchievementQueue((previous) => [...previous, ...nextPopups]);
+    }
+  }, [achievementLog]);
+
+  useEffect(() => {
+    if (activeAchievement || achievementQueue.length === 0) {
+      return;
+    }
+
+    setActiveAchievement(achievementQueue[0]);
+    setAchievementQueue((previous) => previous.slice(1));
+  }, [achievementQueue, activeAchievement]);
+
+  useEffect(() => {
+    if (!authMode) {
+      document.body.style.overflow = "";
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [authMode]);
 
   const progressPercent = useMemo(() => {
     const stepsCompleted = [
@@ -285,14 +519,63 @@ export default function App() {
         <>
           <AstraforgeScene introPhase={introPhase} />
           <div className="overlay">
+            {loggedInUsername ? (
+              <div className="home-auth">
+                <UserProfileBar username={loggedInUsername} totalXP={totalXP} onLogoutClick={handleLogout} />
+              </div>
+            ) : (
+              <HomeAuthControls onLoginClick={openLoginPage} onSignupClick={openSignupPage} />
+            )}
             <div className={`intro-copy intro-copy--static${introPhase === "done" ? " intro-copy--hidden" : ""}`}>
-              <div className="intro-title">ASTRAFORGE</div>
+              <div className="intro-title glitch-title">ASTRAFORGE</div>
               <div className="intro-tagline">Forge your place among the stars.</div>
             </div>
-            <button className="home-action" onClick={() => setPage("APPLICATION")}>
-              Continue Application
-            </button>
+            {loggedInUsername ? (
+              <button className="home-action" onClick={() => setPage("APPLICATION")}>
+                Continue Application
+              </button>
+            ) : null}
           </div>
+
+          {authMode && (
+            <AuthModal
+              mode={authMode}
+              username={authMode === "LOGIN" ? loginUsername : signupUsername}
+              password={authMode === "LOGIN" ? loginPassword : signupPassword}
+              authLoading={authLoading}
+              authError={authError}
+              authSuccess={authSuccess}
+              onClose={closeAuthModal}
+              onUsernameChange={(value: string) => {
+                if (authMode === "LOGIN") {
+                  setLoginUsername(value);
+                } else {
+                  setSignupUsername(value);
+                }
+              }}
+              onPasswordChange={(value: string) => {
+                if (authMode === "LOGIN") {
+                  setLoginPassword(value);
+                } else {
+                  setSignupPassword(value);
+                }
+              }}
+              onSubmit={() => {
+                if (authMode === "LOGIN") {
+                  void handleLogin();
+                } else {
+                  void handleSignup();
+                }
+              }}
+              onSwitchMode={() => {
+                if (authMode === "LOGIN") {
+                  openSignupPage();
+                } else {
+                  openLoginPage();
+                }
+              }}
+            />
+          )}
         </>
       ) : (
         <div className={`application application-step-${currentStep}`}>
@@ -303,6 +586,10 @@ export default function App() {
             </div>
             <div className="header-controls">
               <div className={`xp-counter${xpPulse ? " xp-counter--pulse" : ""}`}>Stellar Energy: {totalXP} XP</div>
+              <div className="level-counter">Level {levelInfo.level} — {levelInfo.title}</div>
+              {loggedInUsername ? (
+                <UserProfileBar username={loggedInUsername} totalXP={totalXP} onLogoutClick={handleLogout} />
+              ) : null}
               <label className="reduce-motion-toggle">
                 <input 
                   type="checkbox" 
@@ -349,7 +636,7 @@ export default function App() {
           </div>
 
           <div className="application-grid">
-            <div className="panel panel--form">
+            <GlitchCard className="panel panel--form">
               {currentStep === 1 && (
                 <>
                   <div className="panel-title">Profile</div>
@@ -360,7 +647,7 @@ export default function App() {
                       value={name}
                       onChange={(event) => setName(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && name.trim() !== "" && !profileCompleted) {
+                        if (event.key === "Enter" && !profileCompleted) {
                           completeProfile();
                         }
                       }}
@@ -373,7 +660,7 @@ export default function App() {
                       value={role}
                       onChange={(event) => setRole(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" && name.trim() !== "" && !profileCompleted) {
+                        if (event.key === "Enter" && !profileCompleted) {
                           completeProfile();
                         }
                       }}
@@ -383,9 +670,9 @@ export default function App() {
                   <button
                     className="application-button"
                     onClick={completeProfile}
-                    disabled={profileCompleted || name.trim() === ""}
+                    disabled={profileCompleted}
                   >
-                    {profileCompleted ? "Profile Completed" : "Complete Profile"}
+                    {profileCompleted ? "PROFILE COMPLETED" : "COMPLETE PROFILE"}
                   </button>
                 </>
               )}
@@ -671,9 +958,9 @@ export default function App() {
                   )}
                 </>
               )}
-            </div>
+            </GlitchCard>
 
-            <div className="panel panel--progress">
+            <GlitchCard className="panel panel--progress">
               <div className="panel-title">Progress</div>
               <div className="progress-ring">
                 <svg viewBox="0 0 120 120">
@@ -739,10 +1026,15 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </div>
+            </GlitchCard>
           </div>
 
           <div className="application-footer">
+            {loggedInUsername && (
+              <button className="application-link" onClick={handleLogout}>
+                Logout ({loggedInUsername})
+              </button>
+            )}
             <button className="application-link" onClick={() => setPage("HOME")}>
               Return to HOME
             </button>
@@ -770,6 +1062,9 @@ export default function App() {
           )}
         </div>
       )}
+
+      <AchievementPopup popup={activeAchievement} onDone={() => setActiveAchievement(null)} />
+      <SaveIndicator state={saveState} />
     </div>
   );
 }

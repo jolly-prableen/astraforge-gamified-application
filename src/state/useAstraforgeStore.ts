@@ -472,8 +472,8 @@ export const useAstraforgeStore = create<AstraforgeState>()(
         set((state) => {
           const active = state.taskSets.find((taskSet) => taskSet.id === state.activeTaskSetId);
           let nextStep: Step = 1;
-          if (state.profileCompleted && active) {
-            nextStep = active.completed ? (active.submittedAt ? 4 : 3) : 2;
+          if (state.profileCompleted) {
+            nextStep = active ? (active.completed ? (active.submittedAt ? 4 : 3) : 2) : 2;
           }
           if (state.currentStep === nextStep) {
             return state;
@@ -487,9 +487,11 @@ export const useAstraforgeStore = create<AstraforgeState>()(
       goToStep: (step) => {
         set((state) => {
           const active = state.taskSets.find((taskSet) => taskSet.id === state.activeTaskSetId);
-          const maxStep: Step = state.profileCompleted && active
-            ? active.completed
-              ? (active.submittedAt ? 4 : 3)
+          const maxStep: Step = state.profileCompleted
+            ? active
+              ? active.completed
+                ? (active.submittedAt ? 4 : 3)
+                : 2
               : 2
             : 1;
           if (step > maxStep || step < 1) {
