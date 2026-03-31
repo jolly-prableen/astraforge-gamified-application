@@ -3,14 +3,17 @@ import AstraforgeScene, { IntroPhase } from "./scene/AstraforgeScene";
 import { AchievementPopup, AuthModal, GlitchCard, HomeAuthControls, SaveIndicator, UserProfileBar } from "./components";
 import type { AchievementPopupData } from "./components/AchievementPopup";
 import {
+  addXp,
+  fetchProgress,
   fetchUserDataRequest,
   loginRequest,
   saveUserDataRequest,
   signupRequest,
-  type BackendUserData
+  type BackendUserData,
+  type ProgressData
 } from "./integration/authApi";
 import { useAstraforgeStore, useBadges } from "./state/useAstraforgeStore";
-import type { AstraforgeState, Step } from "./state/useAstraforgeStore";
+import type { AstraforgeState, Step, TaskSet } from "./state/useAstraforgeStore";
 import { useFeatureFlags } from "./state/featureFlags";
 import { getUserLevel } from "./utils/gamification";
 import html2canvas from "html2canvas";
@@ -41,6 +44,19 @@ const useIntroSequence = () => {
 };
 
 const steps = ["Profile", "Tasks", "Submission", "Status"];
+
+const createFallbackMission = (index = 1): TaskSet => {
+  const now = Date.now();
+  return {
+    id: `mission-${now}`,
+    title: `Mission ${index}`,
+    tasks: [],
+    completed: false,
+    xpEarned: 0,
+    completedAt: null,
+    submittedAt: null
+  };
+};
 
 export default function App() {
   const introPhase = useIntroSequence();
@@ -94,6 +110,7 @@ export default function App() {
   const [showFullLog, setShowFullLog] = useState(false);
   const snapshotRef = useRef<HTMLDivElement>(null);
   const lastAchievementIndexRef = useRef<number | null>(null);
+  const syncedXpRef = useRef<number | null>(null);
 
   const activeTaskSet = useMemo(
     () => taskSets.find((taskSet) => taskSet.id === activeTaskSetId) || taskSets[0],
@@ -150,18 +167,67 @@ export default function App() {
       return;
     }
 
+    useAstraforgeStore.setState((previous) => {
+      const incomingTaskSets = Array.isArray(data.taskSets)
+        ? (data.taskSets as AstraforgeState["taskSets"])
+        : null;
+
+      const fallbackMission = createFallbackMission(1);
+      const nextTaskSets = incomingTaskSets && incomingTaskSets.length > 0
+        ? incomingTaskSets
+        : previous.taskSets.length > 0
+          ? previous.taskSets
+          : [fallbackMission];
+
+      const nextActiveTaskSetId = nextTaskSets.some((taskSet) => taskSet.id === previous.activeTaskSetId)
+        ? previous.activeTaskSetId
+        : nextTaskSets[0].id;
+
+      return {
+        ...previous,
+        totalXP: typeof data.totalXP === "number" ? data.totalXP : previous.totalXP,
+        taskSets: nextTaskSets,
+        activeTaskSetId: nextActiveTaskSetId,
+        personalityType:
+          typeof data.personality === "string"
+            ? (data.personality as AstraforgeState["personalityType"])
+            : previous.personalityType,
+        personalityDerivedAt:
+          typeof data.personality === "string" ? Date.now() : previous.personalityDerivedAt
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (taskSets.length > 0) {
+      return;
+    }
+
+    const fallbackMission = createFallbackMission(1);
+    useAstraforgeStore.setState((previous) => {
+      if (previous.taskSets.length > 0) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        taskSets: [fallbackMission],
+        activeTaskSetId: fallbackMission.id
+      };
+    });
+  }, [taskSets.length]);
+
+  const hydrateProgressFromBackend = (data: ProgressData | undefined) => {
+    if (!data) {
+      return;
+    }
+
+    syncedXpRef.current = data.xp;
+
     useAstraforgeStore.setState((previous) => ({
       ...previous,
-      totalXP: typeof data.totalXP === "number" ? data.totalXP : previous.totalXP,
-      taskSets: Array.isArray(data.taskSets)
-        ? (data.taskSets as AstraforgeState["taskSets"])
-        : previous.taskSets,
-      personalityType:
-        typeof data.personality === "string"
-          ? (data.personality as AstraforgeState["personalityType"])
-          : previous.personalityType,
-      personalityDerivedAt:
-        typeof data.personality === "string" ? Date.now() : previous.personalityDerivedAt
+      totalXP: typeof data.xp === "number" ? data.xp : previous.totalXP,
+      unlockedBadges: Array.isArray(data.badges) ? data.badges : previous.unlockedBadges
     }));
   };
 
@@ -194,6 +260,8 @@ export default function App() {
 
       const latestDataResponse = await fetchUserDataRequest(username);
       hydrateStoreFromBackend(latestDataResponse.data?.data || loginPayload.data?.data);
+      const progressResponse = await fetchProgress(username);
+      hydrateProgressFromBackend(progressResponse.data);
 
       setLoggedInUsername(username);
       window.localStorage.setItem(AUTH_STORAGE_KEY, username);
@@ -208,6 +276,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    syncedXpRef.current = null;
     setLoggedInUsername(null);
     setAuthError("");
     setAuthSuccess("");
@@ -275,6 +344,8 @@ export default function App() {
           return;
         }
         hydrateStoreFromBackend(response.data?.data);
+        const progressResponse = await fetchProgress(savedUsername);
+        hydrateProgressFromBackend(progressResponse.data);
         setLoggedInUsername(savedUsername);
       } catch (error) {
         if (!cancelled) {
@@ -290,6 +361,55 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loggedInUsername) {
+      syncedXpRef.current = null;
+      return;
+    }
+
+    if (syncedXpRef.current === null) {
+      syncedXpRef.current = totalXP;
+      return;
+    }
+
+    if (totalXP <= syncedXpRef.current) {
+      return;
+    }
+
+    const xpDelta = totalXP - syncedXpRef.current;
+    let cancelled = false;
+
+    const syncXp = async () => {
+      try {
+        const response = await addXp(loggedInUsername, xpDelta);
+        if (cancelled) {
+          return;
+        }
+
+        const progress = response.data;
+        if (!progress) {
+          return;
+        }
+
+        syncedXpRef.current = progress.xp;
+        useAstraforgeStore.setState((previous) => ({
+          ...previous,
+          totalXP: progress.xp,
+          unlockedBadges: Array.isArray(progress.badges) ? progress.badges : previous.unlockedBadges
+        }));
+      } catch (error) {
+        console.warn("XP sync failed:", error);
+        syncedXpRef.current = totalXP;
+      }
+    };
+
+    syncXp();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedInUsername, totalXP]);
 
   useEffect(() => {
     if (!loggedInUsername) {
@@ -677,89 +797,102 @@ export default function App() {
                 </>
               )}
 
-              {currentStep === 2 && activeTaskSet && (
+              {currentStep === 2 && (
                 <>
                   <div className="panel-title">Missions</div>
                   <div className="panel-description">Complete tasks in your active mission to progress.</div>
-                  <div className="task-sets">
-                    {taskSets.map((taskSet) => {
-                      const isActive = taskSet.id === activeTaskSetId;
-                      const isExpanded = expandedTaskSets[taskSet.id] ?? isActive;
-                      const isCompleted = taskSet.completed;
-                      return (
-                        <div key={taskSet.id} className={`task-set${isActive ? " task-set--active" : ""}`}>
-                          <button
-                            className="task-set-header"
-                            type="button"
-                            onClick={() => toggleTaskSet(taskSet.id)}
-                          >
-                            <div>
-                              <div className="task-set-title">{taskSet.title}</div>
-                              <div className="task-set-subtitle">
-                                {isCompleted ? "Completed" : isActive ? "Active" : "Locked"} · {taskSet.tasks.length} tasks
-                              </div>
-                            </div>
-                            <div className="task-set-meta">
-                              <span className="task-set-xp">{taskSet.xpEarned} XP</span>
-                              <span className="task-set-toggle">{isExpanded ? "−" : "+"}</span>
-                            </div>
-                          </button>
-
-                          {isExpanded && (
-                            <div className="task-set-body">
-                              {isActive && !isCompleted && (
-                                <div className="task-add">
-                                  <input
-                                    value={newTaskLabel}
-                                    onChange={(event) => setNewTaskLabel(event.target.value)}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter" && newTaskLabel.trim() !== "") {
-                                        handleAddTask();
-                                      }
-                                    }}
-                                    placeholder="Add a custom task"
-                                    aria-label="Add a custom task"
-                                  />
-                                  <button
-                                    className="application-button"
-                                    type="button"
-                                    onClick={handleAddTask}
-                                    disabled={newTaskLabel.trim() === ""}
-                                  >
-                                    Add Task
-                                  </button>
-                                  <button
-                                    className="application-button"
-                                    type="button"
-                                    onClick={resetActiveMissionTasks}
-                                    disabled={taskSet.tasks.some((task) => task.completed)}
-                                  >
-                                    Reset Tasks
-                                  </button>
-                                </div>
-                              )}
-                              <div className="task-list">
-                                {taskSet.tasks.map((task) => (
-                                  <label
-                                    key={task.id}
-                                    className={`task-item${task.completed ? " task-item--done" : ""}`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={task.completed}
-                                      onChange={() => completeTask(task.id)}
-                                      disabled={!isActive || task.completed}
-                                    />
-                                    <span>{task.label}</span>
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                  {taskSets.length === 0 ? (
+                    <div className="task-sets">
+                      <div className="task-set task-set--active">
+                        <div className="task-set-header">
+                          <div>
+                            <div className="task-set-title">Mission 1</div>
+                            <div className="task-set-subtitle">Initializing...</div>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="task-sets">
+                      {taskSets.map((taskSet) => {
+                        const isActive = taskSet.id === activeTaskSetId;
+                        const isExpanded = expandedTaskSets[taskSet.id] ?? isActive;
+                        const isCompleted = taskSet.completed;
+                        return (
+                          <div key={taskSet.id} className={`task-set${isActive ? " task-set--active" : ""}`}>
+                            <button
+                              className="task-set-header"
+                              type="button"
+                              onClick={() => toggleTaskSet(taskSet.id)}
+                            >
+                              <div>
+                                <div className="task-set-title">{taskSet.title}</div>
+                                <div className="task-set-subtitle">
+                                  {isCompleted ? "Completed" : isActive ? "Active" : "Locked"} · {taskSet.tasks.length} tasks
+                                </div>
+                              </div>
+                              <div className="task-set-meta">
+                                <span className="task-set-xp">{taskSet.xpEarned} XP</span>
+                                <span className="task-set-toggle">{isExpanded ? "−" : "+"}</span>
+                              </div>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="task-set-body">
+                                {isActive && !isCompleted && (
+                                  <div className="task-add">
+                                    <input
+                                      value={newTaskLabel}
+                                      onChange={(event) => setNewTaskLabel(event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter" && newTaskLabel.trim() !== "") {
+                                          handleAddTask();
+                                        }
+                                      }}
+                                      placeholder="Add a custom task"
+                                      aria-label="Add a custom task"
+                                    />
+                                    <button
+                                      className="application-button"
+                                      type="button"
+                                      onClick={handleAddTask}
+                                      disabled={newTaskLabel.trim() === ""}
+                                    >
+                                      Add Task
+                                    </button>
+                                    <button
+                                      className="application-button"
+                                      type="button"
+                                      onClick={resetActiveMissionTasks}
+                                      disabled={taskSet.tasks.some((task) => task.completed)}
+                                    >
+                                      Reset Tasks
+                                    </button>
+                                  </div>
+                                )}
+                                <div className="task-list">
+                                  {taskSet.tasks.map((task) => (
+                                    <label
+                                      key={task.id}
+                                      className={`task-item${task.completed ? " task-item--done" : ""}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={task.completed}
+                                        onChange={() => completeTask(task.id)}
+                                        disabled={!isActive || task.completed}
+                                      />
+                                      <span>{task.label}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
 

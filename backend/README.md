@@ -1,29 +1,41 @@
 # ASTRAFORGE Backend
 
-This folder contains a beginner-friendly Node.js + Express backend for local development.
+Node.js + Express backend with SQLite persistence for gamification progress.
 
 ## Features
 
 - Express server with CORS + JSON parsing
 - Password hashing with bcrypt
-- In-memory user storage (no database)
-- API routes:
+- SQLite auto-initialization via `better-sqlite3`
+- Automatic table creation: `user_progress`
+- Existing routes remain available:
   - `POST /signup`
   - `POST /login`
   - `POST /save`
   - `GET /data/:username`
   - `GET /health`
+- New progress routes:
+  - `GET /api/progress/:userId`
+  - `POST /api/progress/:userId`
+  - `POST /api/progress/:userId/add-xp`
+
+## Environment
+
+Copy `.env.example` to `.env` and update if needed:
+
+```bash
+PORT=5000
+DB_PATH=./data/app.db
+```
+
+The SQLite file is stored at `backend/data/app.db` by default.
 
 ## Run locally
 
 ```bash
 cd backend
 npm install
-npm run start
+npm run dev
 ```
 
-The server runs on `http://localhost:3001`.
-
-## Important note
-
-Data is stored in memory. It will reset whenever the server restarts.
+Server runs on `http://localhost:5000` unless `PORT` is changed.

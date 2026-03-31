@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export type AchievementPopupData = {
   id: string;
@@ -14,11 +14,19 @@ type AchievementPopupProps = {
 };
 
 export default function AchievementPopup({ popup, durationMs = 2600, onDone }: AchievementPopupProps) {
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
   useEffect(() => {
     if (!popup) return;
-    const timer = window.setTimeout(onDone, durationMs);
+    const timer = window.setTimeout(() => {
+      onDoneRef.current();
+    }, durationMs);
     return () => window.clearTimeout(timer);
-  }, [popup, durationMs, onDone]);
+  }, [popup, durationMs]);
 
   if (!popup) return null;
 

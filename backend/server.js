@@ -1,9 +1,11 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcrypt";
+import { addXp, calculateLevel, getOrCreateProgress, upsertProgress } from "./services/progressService.js";
 
 const app = express();
-const PORT = 3001;
+const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 const SALT_ROUNDS = 10;
 
 // In-memory user store (resets whenever the server restarts).
@@ -25,6 +27,39 @@ const sendError = (res, message, statusCode = 400) => {
     success: false,
     message
   });
+};
+
+const sendDataSuccess = (res, data, statusCode = 200) => {
+  return res.status(statusCode).json({
+    success: true,
+    data
+  });
+};
+
+const isValidProgressPayload = (payload) => {
+  if (payload.xp !== undefined && (!Number.isInteger(payload.xp) || payload.xp < 0)) {
+    return "xp must be a non-negative integer.";
+  }
+
+  if (payload.level !== undefined && (!Number.isInteger(payload.level) || payload.level < 1)) {
+    return "level must be an integer greater than or equal to 1.";
+  }
+
+  if (payload.badges !== undefined) {
+    if (!Array.isArray(payload.badges) || payload.badges.some((item) => typeof item !== "string")) {
+      return "badges must be an array of strings.";
+    }
+  }
+
+  if (
+    payload.xp !== undefined &&
+    payload.level !== undefined &&
+    payload.level !== calculateLevel(payload.xp)
+  ) {
+    return "level must match formula: floor(xp / 100) + 1.";
+  }
+
+  return null;
 };
 
 const validateCredentials = (username, password) => {
@@ -73,6 +108,7 @@ app.post("/signup", async (req, res) => {
     };
 
     users.push(newUser);
+    getOrCreateProgress(newUser.username);
 
     return sendSuccess(
       res,
@@ -144,6 +180,10 @@ app.post("/save", (req, res) => {
       ...data
     };
 
+    if (Number.isInteger(data.totalXP) && data.totalXP >= 0) {
+      upsertProgress(user.username, { xp: data.totalXP });
+    }
+
     return sendSuccess(res, "User data saved successfully.", {
       username: user.username,
       data: user.data
@@ -170,13 +210,86 @@ app.get("/data/:username", (req, res) => {
       return sendError(res, "User not found.", 404);
     }
 
+    const progress = getOrCreateProgress(user.username);
+    const mergedData = {
+      ...user.data,
+      totalXP: progress.xp
+    };
+
     return sendSuccess(res, "User data fetched successfully.", {
       username: user.username,
-      data: user.data
+      data: mergedData
     });
   } catch (error) {
     console.error("Fetch data error:", error);
     return sendError(res, "Internal server error while fetching data.", 500);
+  }
+});
+
+// GET /api/progress/:userId
+app.get("/api/progress/:userId", (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId || typeof userId !== "string" || !userId.trim()) {
+      return sendError(res, "A valid userId parameter is required.", 400);
+    }
+
+    const progress = getOrCreateProgress(userId);
+    return sendDataSuccess(res, progress, 200);
+  } catch (error) {
+    console.error("Get progress error:", error);
+    return sendError(res, "Internal server error while fetching progress.", 500);
+  }
+});
+
+// POST /api/progress/:userId
+app.post("/api/progress/:userId", (req, res) => {
+  try {
+    const { userId } = req.params;
+    const payload = req.body || {};
+
+    if (!userId || typeof userId !== "string" || !userId.trim()) {
+      return sendError(res, "A valid userId parameter is required.", 400);
+    }
+
+    const validationError = isValidProgressPayload(payload);
+    if (validationError) {
+      return sendError(res, validationError, 400);
+    }
+
+    const progress = upsertProgress(userId, {
+      xp: payload.xp,
+      level: payload.level,
+      badges: payload.badges
+    });
+
+    return sendDataSuccess(res, progress, 200);
+  } catch (error) {
+    console.error("Upsert progress error:", error);
+    return sendError(res, "Internal server error while saving progress.", 500);
+  }
+});
+
+// POST /api/progress/:userId/add-xp
+app.post("/api/progress/:userId/add-xp", (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { xpToAdd } = req.body || {};
+
+    if (!userId || typeof userId !== "string" || !userId.trim()) {
+      return sendError(res, "A valid userId parameter is required.", 400);
+    }
+
+    if (!Number.isInteger(xpToAdd) || xpToAdd <= 0) {
+      return sendError(res, "xpToAdd must be a positive integer.", 400);
+    }
+
+    const progress = addXp(userId, xpToAdd);
+    return sendDataSuccess(res, progress, 200);
+  } catch (error) {
+    console.error("Add XP error:", error);
+    return sendError(res, "Internal server error while adding XP.", 500);
   }
 });
 

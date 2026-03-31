@@ -14,6 +14,7 @@ https://astraforge-gamified-application-gr4.vercel.app
 💻 **GitHub Repository**  
 https://github.com/jolly-prableen/astraforge-gamified-application
 
+
 ---
 
 ## ✨ Why ASTRAFORGE?
@@ -37,18 +38,11 @@ This project demonstrates:
 - Multiple missions can be completed over time
 - Progress accumulates naturally — **no forced resets**
 
-### ⭐ XP-Driven Progression
 - XP is awarded for meaningful actions
 - XP persists across sessions
 - XP unlocks achievements and badges globally
 
 ### 🏆 Achievements & Badges
-- Automatic badge unlocks at XP milestones
-- Includes **hidden (shadow) achievements**
-- All achievements are timestamped and logged
-
-### 🧠 Behavioral Personality System
-- User behavior is analyzed to derive a **Constellation Personality**
 - Personality reflects pacing, consistency, and task cadence
 - Personality locks permanently after final submission
 
@@ -248,3 +242,64 @@ Users can never become trapped in an invalid state.
 ```bash
 npm install
 npm run dev
+```
+
+### Backend (Express + SQLite)
+
+```bash
+cd backend
+npm install
+copy .env.example .env
+npm run dev
+```
+
+Default backend URL: `http://localhost:5000`
+
+### Frontend (Vite + React)
+
+Run in a second terminal from project root:
+
+```bash
+npm run dev
+```
+
+Default frontend URL: `http://localhost:5173`
+
+If required, set `VITE_API_BASE_URL` to your backend URL.
+
+---
+
+## 🗄 Server and Database Connection
+
+This project includes a persistent server-database integration for gamification progress.
+
+- Backend: Node.js + Express
+- Database: SQLite (`better-sqlite3`)
+- DB file location: `backend/data/app.db`
+- Auto-created table: `user_progress`
+- Stored progress fields: `user_id`, `xp`, `level`, `badges`, `updated_at`
+- Level formula: `level = floor(xp / 100) + 1`
+
+### API Endpoint Examples
+
+Get or create progress:
+
+```bash
+curl http://localhost:5000/api/progress/demo-user
+```
+
+Upsert progress:
+
+```bash
+curl -X POST http://localhost:5000/api/progress/demo-user \
+  -H "Content-Type: application/json" \
+  -d '{"xp":120,"level":2,"badges":["badge-1","badge-2"]}'
+```
+
+Add XP:
+
+```bash
+curl -X POST http://localhost:5000/api/progress/demo-user/add-xp \
+  -H "Content-Type: application/json" \
+  -d '{"xpToAdd":15}'
+```
