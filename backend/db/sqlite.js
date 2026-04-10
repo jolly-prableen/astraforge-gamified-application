@@ -21,5 +21,16 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_credentials (
+    username TEXT PRIMARY KEY COLLATE NOCASE,
+    hashed_password TEXT NOT NULL,
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
 console.log(`[DB] SQLite connected: ${absoluteDbPath}`);
 console.log("[DB] Table ready: user_progress");
+console.log("[DB] Table ready: user_credentials");

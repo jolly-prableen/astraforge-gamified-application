@@ -25,7 +25,7 @@ const CameraRig = ({ introPhase, onCameraSettled }: SceneProps) => {
     if (introPhase !== "done") {
       return;
     }
-
+  
     cameraProgress.current = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(cameraProgress.current, 1, 1 - Math.exp(-delta * 1.2)),
       0,

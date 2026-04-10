@@ -3,13 +3,11 @@ import express from "express";
 import cors from "cors";
 import bcrypt from "bcrypt";
 import { addXp, calculateLevel, getOrCreateProgress, upsertProgress } from "./services/progressService.js";
+import { createUser, getUserByUsername, updateUserData } from "./services/userService.js";
 
 const app = express();
 const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 const SALT_ROUNDS = 10;
-
-// In-memory user store (resets whenever the server restarts).
-const users = [];
 
 app.use(cors());
 app.use(express.json());
@@ -89,7 +87,7 @@ app.post("/signup", async (req, res) => {
     }
 
     const normalizedUsername = username.trim();
-    const existingUser = users.find((user) => user.username === normalizedUsername);
+    const existingUser = getUserByUsername(normalizedUsername);
 
     if (existingUser) {
       return sendError(res, "User already exists.", 409);
@@ -97,7 +95,7 @@ app.post("/signup", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-    const newUser = {
+    const newUser = createUser({
       username: normalizedUsername,
       hashedPassword,
       data: {
@@ -105,9 +103,7 @@ app.post("/signup", async (req, res) => {
         taskSets: [],
         personality: null
       }
-    };
-
-    users.push(newUser);
+    });
     getOrCreateProgress(newUser.username);
 
     return sendSuccess(
@@ -133,7 +129,7 @@ app.post("/login", async (req, res) => {
     }
 
     const normalizedUsername = username.trim();
-    const user = users.find((item) => item.username === normalizedUsername);
+    const user = getUserByUsername(normalizedUsername);
 
     if (!user) {
       return sendError(res, "Invalid username or password.", 401);
@@ -169,24 +165,25 @@ app.post("/save", (req, res) => {
     }
 
     const normalizedUsername = username.trim();
-    const user = users.find((item) => item.username === normalizedUsername);
+    const user = getUserByUsername(normalizedUsername);
 
     if (!user) {
       return sendError(res, "User not found.", 404);
     }
 
-    user.data = {
-      ...user.data,
-      ...data
-    };
+    const updatedUser = updateUserData(normalizedUsername, data);
+
+    if (!updatedUser) {
+      return sendError(res, "User not found.", 404);
+    }
 
     if (Number.isInteger(data.totalXP) && data.totalXP >= 0) {
       upsertProgress(user.username, { xp: data.totalXP });
     }
 
     return sendSuccess(res, "User data saved successfully.", {
-      username: user.username,
-      data: user.data
+      username: updatedUser.username,
+      data: updatedUser.data
     });
   } catch (error) {
     console.error("Save error:", error);
@@ -204,7 +201,7 @@ app.get("/data/:username", (req, res) => {
     }
 
     const normalizedUsername = username.trim();
-    const user = users.find((item) => item.username === normalizedUsername);
+    const user = getUserByUsername(normalizedUsername);
 
     if (!user) {
       return sendError(res, "User not found.", 404);

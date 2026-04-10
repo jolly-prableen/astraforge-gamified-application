@@ -88,7 +88,7 @@ export const getOrCreateProgress = (userId) => {
   return mapProgressRow(created);
 };
 
-export const upsertProgress = (userId, data = {}) => {
+export const upsertProgress = (userId,  data = {}) => {
   const normalizedUserId = normalizeUserId(userId);
   const current = getOrCreateProgress(normalizedUserId);
 

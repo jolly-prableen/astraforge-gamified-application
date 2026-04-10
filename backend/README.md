@@ -1,11 +1,12 @@
 # ASTRAFORGE Backend
 
-Node.js + Express backend with SQLite persistence for gamification progress.
+Node.js + Express backend with SQLite persistence for authentication and gamification progress.
 
 ## Features
 
 - Express server with CORS + JSON parsing
 - Password hashing with bcrypt
+- Persistent user credentials in SQLite (`user_credentials`)
 - SQLite auto-initialization via `better-sqlite3`
 - Automatic table creation: `user_progress`
 - Existing routes remain available:
